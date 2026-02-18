@@ -2,14 +2,14 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"path/filepath"
 	"encoding/json"
-
-	//"net/url"
+	"fmt"
+	"net/http"
+	"net/url"
+	"os"
 
 	"github.com/gweppi/gwup/internal/shared"
+	"github.com/gweppi/gwup/cmd/client/config"
 	"github.com/urfave/cli/v3"
 )
 
@@ -22,7 +22,7 @@ const configKey contextKey = "config"
 func main() {
 	ctx := context.Background()
 
-	config, err := getConfig()
+	config, err := config.GetConfig()
 	if err != nil {
 		// config could not be loaded, return error
 		fmt.Println(err)
@@ -33,105 +33,74 @@ func main() {
 	cmd := &cli.Command {
 		Name: "gwup",
 		Version: "1.0.0",
+		Action: handleUpload,
 		Commands: []*cli.Command {
 			{
 				Name: "config",
 				Usage: "Configurate gwup (set sever and authcode)",
-				Action: configCommand,
+				Action: handleConfig,
 			},
 			{
 				Name: "paste",
 				Usage: "Paste a file or directory",
-				Action: pasteCommand,
+				Action: handlePaste,
 			},
 		},
 	}
 
-	cmd.Run(ctx, os.Args)
+	if err := cmd.Run(ctx, os.Args); err != nil {
+		fmt.Println(err)
+	}
 }
 
-func getConfigFile() (*os.File, error) {
-	dir, err := os.UserHomeDir()
-	// there was en error getting the config file, print error on screen
-	if err != nil {
-		return nil, fmt.Errorf("error opening config file: %w", err)
-	}
-
-	// path where the config file should be located
-	configDir := filepath.Join(dir, ".config", "gwup")
-	if err := os.MkdirAll(configDir, 0700); err != nil {
-		return nil, fmt.Errorf("could not create config directory: %w", err)
-	}
-	
-	configFilePath := filepath.Join(configDir, "config.json")
-	configFile, err := os.OpenFile(configFilePath, os.O_RDWR|os.O_CREATE, 0600)
-	
-	if err != nil {
-		return nil, fmt.Errorf("error opening config file: %w", err)
-	}
-
-	return configFile, nil
-}
-
-func getConfig() (shared.Config, error) {
-	// check if there is a file stored by the user that includes config values
-	file, err := getConfigFile()
-	if err != nil {
-		return shared.Config{}, err
-	}
-
-	var config shared.Config
-
-	stat, err := file.Stat()
-	if err != nil {
-		return shared.Config{}, err
-	}
-
-	bytes := make([]byte, stat.Size())
-	file.Read(bytes)
-	json.Unmarshal(bytes, &config)
-	
-	return config, nil
-}
-
-func setConfig(config shared.Config) error {
-	file, err := getConfigFile()
-	if err != nil {
-		return err
-	}
-
-	if err := file.Truncate(0); err != nil {
-		return err
-	}
-
-	if _, err := file.Seek(0, 0); err != nil {
-		return err
-	}
-
-	encoder := json.NewEncoder(file)
-	encoder.Encode(config)
-
+func handleUpload(ctx context.Context, cmd *cli.Command) error {
+	fmt.Println("This is the paste command")
 	return nil
 }
 
-func configCommand(ctx context.Context, cmd *cli.Command) error {
+
+func handleConfig(ctx context.Context, cmd *cli.Command) error {
 	newConfig := shared.Config{}
 
 	var serverUrl string;
 	fmt.Print("Please enter your server url...\n > ")
 	fmt.Scan(&serverUrl)
 	// do some checks on the server url
+	if _, err := url.Parse(serverUrl); err != nil {
+		return err
+	}
 	newConfig.ServerUrl = serverUrl
+	
+	res, err := http.Get(serverUrl + "/health")
+	if err != nil {
+		return err
+	}
+
+	defer res.Body.Close()
+	var status shared.ServerInfo
+	decoder := json.NewDecoder(res.Body)
+	if err := decoder.Decode(&status); err != nil {
+		return err
+	}
+
+	// check if server status is ok
+	if status.Status != "ok" {
+		return fmt.Errorf("The server is not healthy")
+	}
+
+	// check if server requires authcode
+	if status.RequiresAuth {
+	}
 
 
-	if err := setConfig(newConfig); err != nil {
+	if err := config.SetConfig(newConfig); err != nil {
 		return err
 	}
 	// if server requires authcode ask for it to be provided, for now just print it
 	return nil
 }
 
-func pasteCommand(ctx context.Context, cmd *cli.Command) error {
+func handlePaste(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
