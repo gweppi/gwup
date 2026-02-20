@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
+	"io"
+	"path/filepath"
 
-	"github.com/gweppi/gwup/internal/shared"
 	"github.com/gweppi/gwup/cmd/client/config"
+	"github.com/gweppi/gwup/internal/shared"
 	"github.com/urfave/cli/v3"
 )
 
@@ -33,7 +36,7 @@ func main() {
 	cmd := &cli.Command {
 		Name: "gwup",
 		Version: "1.0.0",
-		Action: handleUpload,
+		Action: handlePaste,
 		Commands: []*cli.Command {
 			{
 				Name: "config",
@@ -45,6 +48,11 @@ func main() {
 				Usage: "Paste a file or directory",
 				Action: handlePaste,
 			},
+			{
+				Name: "upload",
+				Usage: "Upload a file or directory to the server",
+				Action: handleUpload,
+			},
 		},
 	}
 
@@ -53,8 +61,81 @@ func main() {
 	}
 }
 
-func handleUpload(ctx context.Context, cmd *cli.Command) error {
+func handlePaste(ctx context.Context, cmd *cli.Command) error {
 	fmt.Println("This is the paste command")
+	return nil
+}
+
+func handleUpload(ctx context.Context, cmd *cli.Command) error {
+	config, err := config.GetConfig()
+	if err != nil {
+		return err
+	}
+
+	// check if server is configured
+	if config.IsUndefined() {
+		return fmt.Errorf("You have not set up a server, please do so by running the config command")
+	}
+
+	// get the name of the file that has to be uploaded
+	fileName := cmd.Args().First()
+
+	// check if the file was actually provided
+	if fileName == "" {
+		return fmt.Errorf("There was no file provided to upload")
+	}
+
+	// check if the file does actually exist
+	if _, err := os.Stat(fileName); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("The provided file does not exist")
+		} else {
+			return fmt.Errorf("Something went wrong locating the file")
+		}
+	}
+
+	// now that we know that the file exits we can stream it to the server
+	file, err := os.Open(fileName)
+	if err != nil {
+		return err
+	}
+
+	readPipe, writePipe := io.Pipe()
+	writer := multipart.NewWriter(writePipe)
+
+	go func() {
+		defer file.Close()
+		defer writePipe.Close()
+		defer writer.Close()
+
+		part, err := writer.CreateFormFile(shared.FileName, filepath.Base(fileName))
+		if err != nil {
+			writePipe.CloseWithError(err)
+		}
+
+		if _, err := io.Copy(part, file); err != nil {
+			writePipe.CloseWithError(err)
+		}
+	}()
+	
+	request, err := http.NewRequest("POST", config.ServerUrl + "/upload", readPipe)
+	if err != nil {
+		return err
+	}
+
+	request.Header.Add("Content-Type", writer.FormDataContentType())
+	if config.AuthCode != "" {
+		request.Header.Add("Authorization", config.AuthCode)
+	}
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+	fmt.Println("File uploaded with code", response.StatusCode)
+
 	return nil
 }
 
@@ -90,8 +171,9 @@ func handleConfig(ctx context.Context, cmd *cli.Command) error {
 
 	// check if server requires authcode
 	if status.RequiresAuth {
+	} else {
+		fmt.Println("This server does not require authentication to paste, continuing...")
 	}
-
 
 	if err := config.SetConfig(newConfig); err != nil {
 		return err
@@ -100,7 +182,4 @@ func handleConfig(ctx context.Context, cmd *cli.Command) error {
 	return nil
 }
 
-func handlePaste(ctx context.Context, cmd *cli.Command) error {
-	return nil
-}
 
