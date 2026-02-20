@@ -62,7 +62,6 @@ func handleUpload(ctx *gin.Context) {
 		if err == nil {
 			defer part.Close()
 
-			fmt.Println(part.Header)
 			_, params, err := mime.ParseMediaType(part.Header.Get("Content-Disposition"))
 			if err != nil {
 				fmt.Println("Something went wrong parsing Content-Disposition headers")
