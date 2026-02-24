@@ -9,4 +9,4 @@ func (c *Config) IsUndefined() bool {
 	return c.ServerUrl == ""
 }
 
-const FileName = "the-file"
+const FieldName = "the-file"

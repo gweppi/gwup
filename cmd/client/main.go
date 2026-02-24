@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"mime/multipart"
+	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
-	"io"
 	"path/filepath"
 
 	"github.com/gweppi/gwup/cmd/client/config"
@@ -62,7 +62,44 @@ func main() {
 }
 
 func handlePaste(ctx context.Context, cmd *cli.Command) error {
-	fmt.Println("This is the paste command")
+	config, err := config.GetConfig()
+	if err != nil {
+		return err
+	}
+
+	request, err := http.NewRequest("GET", config.ServerUrl + "/download", nil)
+	if err != nil {
+		return err
+	}
+
+	request.Header.Add("X-File-Id", "")
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+
+
+	_, params, err := mime.ParseMediaType(response.Header.Get("Content-Disposition"))
+	if err != nil {
+		return err
+	}
+
+	fileName := params["filename"]
+	if fileName == "" {
+		return fmt.Errorf("No file name provided in Content-Disposition header")
+	}
+
+	file, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	io.Copy(file, response.Body)
+
+	fmt.Printf("Written file named %s to disk\n", fileName)
 	return nil
 }
 
@@ -100,30 +137,13 @@ func handleUpload(ctx context.Context, cmd *cli.Command) error {
 		return err
 	}
 
-	readPipe, writePipe := io.Pipe()
-	writer := multipart.NewWriter(writePipe)
-
-	go func() {
-		defer file.Close()
-		defer writePipe.Close()
-		defer writer.Close()
-
-		part, err := writer.CreateFormFile(shared.FileName, filepath.Base(fileName))
-		if err != nil {
-			writePipe.CloseWithError(err)
-		}
-
-		if _, err := io.Copy(part, file); err != nil {
-			writePipe.CloseWithError(err)
-		}
-	}()
-	
-	request, err := http.NewRequest("POST", config.ServerUrl + "/upload", readPipe)
+	request, err := http.NewRequest("POST", config.ServerUrl + "/upload", file)
 	if err != nil {
 		return err
 	}
 
-	request.Header.Add("Content-Type", writer.FormDataContentType())
+	request.Header.Add("Content-Type", "application/octet-stream")
+	request.Header.Add("Content-Disposition", "attachment; filename=\"" + filepath.Base(fileName) + "\"")
 	if config.AuthCode != "" {
 		request.Header.Add("Authorization", config.AuthCode)
 	}
