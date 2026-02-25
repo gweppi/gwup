@@ -1,17 +1,16 @@
 package main
 
-
 import (
-	"fmt"
-	"net/http"
 	"io"
 	"os"
+	"fmt"
 	"mime"
 	"time"
+	"strings"
+	"net/http"
 
-	"github.com/gweppi/gwup/internal/shared"
-	"github.com/gweppi/gwup/cmd/server/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/gweppi/gwup/internal/shared"
 )
 
 const DATA_DIR = "./data/"
@@ -88,7 +87,7 @@ func handleDownload(ctx *gin.Context) {
 	var time time.Time
 	for _, entry := range entries {
 		if fileId != "" {
-			if utils.FileNameMatches(entry.Name(), fileId) {
+			if strings.Contains(entry.Name(), fileId) {
 				fileName = entry.Name()
 				break
 			}
